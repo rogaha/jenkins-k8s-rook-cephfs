@@ -44,7 +44,7 @@ spec:
                     imageName = "${DOCKERHUB_CREDENTIALS_USR}/${APP_NAME}:${imageTag}"
                 }                
                 container('docker') {
-                    sh "docker build -t ${imageName} nginx"
+                    sh "docker build -t ${imageName} hello-nginx"
                 }
             }
         }
@@ -61,9 +61,9 @@ spec:
             steps {
                 container('k8s-deploy') {
                     sh "helm upgrade -i" +
-                        " --namespace staging" +
+                        " --namespace jenkins" +
                         " --set image.tag=${imageTag}" +
-                        " ${appName} charts/${appName}"
+                        " ${APP_NAME} charts/${APP_NAME}"
                 }
             }
         }
