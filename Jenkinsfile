@@ -1,43 +1,78 @@
 pipeline {
-  agent any
-
-  environment {
-    DOCKERHUB_CREDENTIALS = credentials('dockerhub_credentials')
-    DOCKER_REPOSITORY = 'rogaha'
-    WEBSERVER_IMAGE = 'hello-nginx'
-    HELM_RELEASE_NAME = 'dockercon-demo'
-  }
-
-  stages {
-
-    stage('Build') {
-      steps {
-        sh 'hostname'
-        sh 'docker login -u ${DOCKERHUB_CREDENTIALS_USR} -p ${DOCKERHUB_CREDENTIALS_PSW}'
-        sh 'docker build -t ${DOCKERHUB_CREDENTIALS_USR}/${WEBSERVER_IMAGE}:${GIT_COMMIT} nginx'
-      }
+    agent {
+        kubernetes {
+            label 'build-pod'
+            defaultContainer 'jnlp'
+            yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: docker
+    image: docker:stable
+    command:
+    - cat
+    tty: true
+    volumeMounts:
+    - name: docker-sock
+      mountPath: /var/run/docker.sock
+  - name: k8s-deploy
+    image: rogaha/k8s-deploy
+    command:
+    - cat
+    tty: true
+  volumes:
+  - name: docker-sock
+    hostPath:
+      path: /var/run/docker.sock
+"""
+        }
     }
 
-    stage('Test') {
-      steps {
-        sh 'echo "tbd.."'
-      }
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub_credentials')
+        DOCKER_REPOSITORY = 'rogaha'
+        APP_NAME = 'hello-nginx'
+        HELM_RELEASE_NAME = 'dockercon-demo'
     }
 
-    stage('Manual Verification') {
-      when {
-        expression { return env.BRANCH_NAME == 'master' }
-      }
-
-      steps {
-        input(message: 'Deploy to Production?', id: 'deploy_to_production')
-      }
+    stages {
+        stage('Build') {
+            steps {
+                script {
+                    imageTag = imageTag()
+                    imageName = "${DOCKERHUB_CREDENTIALS_USR}/${APP_NAME}:${imageTag}"
+                }                
+                container('docker') {
+                    sh "docker build -t ${imageName} nginx"
+                }
+            }
+        }
+        stage('Publish') {         
+            steps {
+                container('docker') {
+                    sh "echo ${DOCKERHUB_CREDENTIALS_PSW}" +
+                        " | docker login -u ${DOCKERHUB_CREDENTIALS_USR} --password-stdin"
+                    sh "docker push ${imageName}"
+                }
+            }
+        }
+        stage('Deploy') {
+            steps {
+                container('k8s-deploy') {
+                    sh "helm upgrade -i" +
+                        " --namespace staging" +
+                        " --set image.tag=${imageTag}" +
+                        " ${appName} charts/${appName}"
+                }
+            }
+        }
     }
+}
 
-    stage('deploy') {
-      steps {
-        sleep 10000
-      }
-    }
-  }
+def imageTag() {
+    sh 'git rev-parse --short HEAD > commit-id'
+    return readFile('commit-id')
+        .replace('\n', '')
+        .replace('\r', '')
 }
